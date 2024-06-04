@@ -14,8 +14,7 @@ model = dict(
         pred_velo=False,
         pred_bbox2d=True,
         strides=(8, 16, 32, 64, 128),
-        regress_ranges=((-1, 48), (48, 96), (96, 192),
-                        (192, 384), (384, 1e8)),
+        regress_ranges=((-1, 48), (48, 96), (96, 192), (192, 384), (384, 1e8)),
         weight_dim=-1))
 
 auto_scale_lr = dict(enable=True)

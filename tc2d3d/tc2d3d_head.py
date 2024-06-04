@@ -105,9 +105,10 @@ class TC2D3DHead(PGDHead):
             mask = (pos_img_idx == idx)
             if pos_strided_bbox_preds[mask].shape[0] == 0:
                 continue
-            cam2img = torch.eye(4,
-                                dtype=pos_strided_bbox_preds.dtype,
-                                device=pos_strided_bbox_preds.device)
+            cam2img = torch.eye(
+                4,
+                dtype=pos_strided_bbox_preds.dtype,
+                device=pos_strided_bbox_preds.device)
             view_shape = views[idx].shape
             cam2img[:view_shape[0], :view_shape[1]] = \
                 pos_strided_bbox_preds.new_tensor(views[idx])
@@ -119,8 +120,8 @@ class TC2D3DHead(PGDHead):
 
             # decode yaws
             if self.use_direction_classifier:
-                pos_dir_cls_scores = torch.max(pos_dir_cls_preds[mask],
-                                               dim=-1)[1]
+                pos_dir_cls_scores = torch.max(
+                    pos_dir_cls_preds[mask], dim=-1)[1]
                 pos_strided_bbox_preds[mask] = self.bbox_coder.decode_yaw(
                     pos_strided_bbox_preds[mask], centers2d_preds,
                     pos_dir_cls_scores, self.dir_offset, cam2img)
@@ -213,9 +214,9 @@ class TC2D3DHead(PGDHead):
             dir_cls_score = torch.max(dir_cls_pred, dim=-1)[1]
             depth_cls_pred = depth_cls_pred.permute(1, 2, 0).reshape(
                 -1, self.num_depth_cls)
-            depth_cls_score = F.softmax(depth_cls_pred,
-                                        dim=-1).topk(k=2,
-                                                     dim=-1)[0].mean(dim=-1)
+            depth_cls_score = F.softmax(
+                depth_cls_pred, dim=-1).topk(
+                    k=2, dim=-1)[0].mean(dim=-1)
             if self.weight_dim != -1:
                 weight = weight.permute(1, 2, 0).reshape(-1, self.weight_dim)
             else:
@@ -278,10 +279,11 @@ class TC2D3DHead(PGDHead):
             mlvl_centerness.append(centerness)
             mlvl_depth_uncertainty.append(depth_uncertainty)
             if self.pred_bbox2d:
-                bbox_pred2d = distance2bbox(points,
-                                            bbox_pred2d,
-                                            max_shape=img_meta['img_shape']
-                                            if not self.use_tc else None)
+                bbox_pred2d = distance2bbox(
+                    points,
+                    bbox_pred2d,
+                    max_shape=img_meta['img_shape']
+                    if not self.use_tc else None)
                 mlvl_bboxes2d.append(bbox_pred2d)
 
         mlvl_centers2d = torch.cat(mlvl_centers2d)
@@ -291,9 +293,8 @@ class TC2D3DHead(PGDHead):
             mlvl_bboxes2d = torch.cat(mlvl_bboxes2d)
 
         # change local yaw to global yaw for 3D nms
-        cam2img = torch.eye(4,
-                            dtype=mlvl_centers2d.dtype,
-                            device=mlvl_centers2d.device)
+        cam2img = torch.eye(
+            4, dtype=mlvl_centers2d.dtype, device=mlvl_centers2d.device)
         cam2img[:view.shape[0], :view.shape[1]] = \
             mlvl_centers2d.new_tensor(view)
         mlvl_bboxes = self.bbox_coder.decode_yaw(mlvl_bboxes, mlvl_centers2d,

@@ -9,7 +9,7 @@ from mmdet3d.utils import array_converter
 def bbox_to_box3d(bboxes, dims, yaw, cam2img, origin=0.5):
     N = bboxes.shape[0]
 
-    P = cam2img.unsqueeze(-3)
+    P = cam2img
     # TODO: combine corners an rotation with the other corner function
     # center_to_corner_box3d
     X = bboxes.new_tensor(corners_nd(dims.numpy(force=True), origin=origin))
@@ -42,9 +42,7 @@ def bbox_to_box3d(bboxes, dims, yaw, cam2img, origin=0.5):
         # T_best[mask] = T[mask]
         # iou_best[mask] = iou[mask]
 
-    # TODO: return bboxes3d, not T
-
-    return T_best
+    return torch.cat([T_best, dims, yaw], dim=1)
 
 
 combinations = ((4, 0, 1, 6), (4, 0, 2, 6), (7, 0, 1, 6), (7, 0, 2, 6),
@@ -58,11 +56,7 @@ combinations = ((4, 0, 1, 6), (4, 0, 2, 6), (7, 0, 1, 6), (7, 0, 2, 6),
                 (0, 1, 4, 3), (0, 5, 4, 3), (0, 1, 4, 7), (0, 5, 4, 7),
                 (1, 4, 0, 2), (1, 5, 0, 2), (1, 4, 0, 3), (1, 5, 0, 3),
                 (4, 0, 5, 6), (4, 1, 5, 6), (4, 0, 5, 7), (4, 1, 5, 7),
-                (5, 0, 1, 2), (5, 4, 1, 2), (5, 0, 1, 6), (5, 4, 1, 6), (0, 0,
-                                                                         4, 3),
-                (0, 0, 4, 7), (0, 4, 4, 3), (0, 4, 4, 7), (1, 1, 0, 2), (1, 1,
-                                                                         0, 2),
-                (1, 0, 0, 3), (1, 0, 0, 3), (4, 4, 5, 6), (4, 4, 5, 6), (4, 5,
-                                                                         5, 7),
-                (4, 5, 5, 7), (5, 5, 1, 2), (5, 5, 1, 2), (5, 1, 1, 6), (5, 1,
-                                                                         1, 6))
+                (5, 0, 1, 2), (5, 4, 1, 2), (5, 0, 1, 6), (5, 4, 1, 6), (0, 0, 4, 3),
+                (0, 0, 4, 7), (0, 4, 4, 3), (0, 4, 4, 7), (1, 1, 0, 2), (1, 1, 0, 2),
+                (1, 0, 0, 3), (1, 0, 0, 3), (4, 4, 5, 6), (4, 4, 5, 6), (4, 5, 5, 7),
+                (4, 5, 5, 7), (5, 5, 1, 2), (5, 5, 1, 2), (5, 1, 1, 6), (5, 1, 1, 6))

@@ -7,8 +7,8 @@ model = dict(
     bbox_head=dict(
         type='TC2D3DHead',
         reg_branch=(
-            (),       # offset
-            (),       # depth
+            (),  # offset
+            (),  # depth
             (256, ),  # size
             (256, ),  # rot
             (256, ),  # kpts

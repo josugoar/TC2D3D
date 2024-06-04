@@ -26,11 +26,12 @@ class TC2D3DTest(Base3DDetector):
 
             bboxes = bboxes_3d.tensor.new_tensor(
                 box3d_to_bbox(bboxes_3d.tensor.numpy(force=True), cam2img))
-            bboxes_3d.tensor = bbox_to_box3d(bboxes,
-                                             bboxes_3d.dims,
-                                             bboxes_3d.yaw,
-                                             cam2img,
-                                             origin=(0.5, 1.0, 0.5))
+            bboxes_3d.tensor = bbox_to_box3d(
+                bboxes,
+                bboxes_3d.dims,
+                bboxes_3d.yaw,
+                cam2img,
+                origin=(0.5, 1.0, 0.5))
 
             result = InstanceData()
             result.bboxes_3d = bboxes_3d

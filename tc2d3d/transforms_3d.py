@@ -1,7 +1,7 @@
 from mmcv.transforms import BaseTransform
 
-from mmdet3d.structures import box3d_to_bbox
 from mmdet3d.registry import TRANSFORMS
+from mmdet3d.structures import box3d_to_bbox
 
 
 @TRANSFORMS.register_module()
