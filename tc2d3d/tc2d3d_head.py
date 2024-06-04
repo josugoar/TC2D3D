@@ -18,9 +18,12 @@ from .box_ops import bbox_to_box3d
 @MODELS.register_module()
 class TC2D3DHead(PGDHead):
 
-    def __init__(self, *args, use_tc: bool = True, **kwargs) -> None:
+    def __init__(self,
+                 *args,
+                 use_tight_constraint: bool = True,
+                 **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.use_tc = use_tc
+        self.use_tight_constraint = use_tight_constraint
 
     def get_proj_bbox2d(self,
                         bbox_preds: List[Tensor],
@@ -52,7 +55,7 @@ class TC2D3DHead(PGDHead):
         for stride_idx, bbox_pred in enumerate(bbox_preds):
             flatten_bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(
                 -1, sum(self.group_reg_dims))
-            if self.use_tc:
+            if self.use_tight_constraint:
                 flatten_bbox_pred[:, :2] = (flatten_bbox_pred[:, -4:-2] -
                                             flatten_bbox_pred[:, -2:]) / 2
             flatten_bbox_pred[:, :2] *= self.strides[stride_idx]
@@ -129,7 +132,7 @@ class TC2D3DHead(PGDHead):
                 centers2d_targets[:, 0] - cam2img[0, 2],
                 cam2img[0, 0]) + pos_bbox_targets_3d[mask, 6]
 
-            if self.use_tc:
+            if self.use_tight_constraint:
                 pos_strided_bbox_preds[mask] = bbox_to_box3d(
                     pos_decoded_bbox2d_preds[mask],
                     pos_strided_bbox_preds[mask, 3:6],
@@ -229,7 +232,7 @@ class TC2D3DHead(PGDHead):
             bbox_pred = bbox_pred.permute(1, 2,
                                           0).reshape(-1,
                                                      sum(self.group_reg_dims))
-            if self.pred_bbox2d and self.use_tc:
+            if self.pred_bbox2d and self.use_tight_constraint:
                 bbox_pred[:, :2] = (bbox_pred[:, -4:-2] -
                                     bbox_pred[:, -2:]) / 2
             bbox_pred3d = bbox_pred[:, :self.bbox_coder.bbox_code_size]
@@ -259,7 +262,7 @@ class TC2D3DHead(PGDHead):
             # change the offset to actual center predictions
             bbox_pred3d[:, :2] = points - bbox_pred3d[:, :2]
             if rescale:
-                if self.pred_bbox2d and not self.use_tc:
+                if self.pred_bbox2d and not self.use_tight_constraint:
                     bbox_pred2d /= bbox_pred2d.new_tensor(scale_factor[0])
             if self.use_depth_classifier:
                 prob_depth_pred = self.bbox_coder.decode_prob_depth(
@@ -283,7 +286,7 @@ class TC2D3DHead(PGDHead):
                     points,
                     bbox_pred2d,
                     max_shape=img_meta['img_shape']
-                    if not self.use_tc else None)
+                    if not self.use_tight_constraint else None)
                 mlvl_bboxes2d.append(bbox_pred2d)
 
         mlvl_centers2d = torch.cat(mlvl_centers2d)
@@ -301,7 +304,7 @@ class TC2D3DHead(PGDHead):
                                                  mlvl_dir_scores,
                                                  self.dir_offset, cam2img)
 
-        if self.pred_bbox2d and self.use_tc:
+        if self.pred_bbox2d and self.use_tight_constraint:
             mlvl_bboxes = bbox_to_box3d(mlvl_bboxes2d, mlvl_bboxes[:, 3:6],
                                         mlvl_bboxes[:, 6], cam2img)
 
@@ -350,7 +353,7 @@ class TC2D3DHead(PGDHead):
 
         results_2d = InstanceData()
 
-        if self.pred_bbox2d and not self.use_tc:
+        if self.pred_bbox2d and not self.use_tight_constraint:
             bboxes2d = nms_results[-1]
             results_2d.bboxes = bboxes2d
             results_2d.scores = scores
