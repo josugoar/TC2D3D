@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -10,36 +10,168 @@ from torch.nn import functional as F
 from mmdet3d.models import PGDHead
 from mmdet3d.models.layers import box3d_multiclass_nms
 from mmdet3d.registry import MODELS
-from mmdet3d.structures import points_img2cam, xywhr2xyxyr
+from mmdet3d.structures import points_cam2img, points_img2cam, xywhr2xyxyr
 from mmdet3d.utils.typing_utils import ConfigType
-from .utils import points_img2tc
+from .box_ops import bbox_to_box3d
 
 
 @MODELS.register_module()
 class TC2D3DHead(PGDHead):
 
-    def __init__(self,
-                 *args,
-                 use_depth_classifier: bool = False,
-                 weight_dim: int = -1,
-                 **kwargs):
-        super().__init__(
-            *args,
-            use_depth_classifier=use_depth_classifier,
-            weight_dim=weight_dim,
-            **kwargs)
+    def __init__(self, *args, use_tc: bool = True, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.use_tc = use_tc
 
-    def loss_by_feat(self, *args, **kwarsg):
-        loss_dict = super().loss_by_feat(*args, **kwarsg)
+    def get_proj_bbox2d(self,
+                        bbox_preds: List[Tensor],
+                        pos_dir_cls_preds: List[Tensor],
+                        labels_3d: List[Tensor],
+                        bbox_targets_3d: List[Tensor],
+                        pos_points: Tensor,
+                        pos_inds: Tensor,
+                        batch_img_metas: List[dict],
+                        pos_depth_cls_preds: Optional[Tensor] = None,
+                        pos_weights: Optional[Tensor] = None,
+                        pos_cls_scores: Optional[Tensor] = None,
+                        with_kpts: bool = False) -> Tuple[Tensor]:
+        views = [np.array(img_meta['cam2img']) for img_meta in batch_img_metas]
+        num_imgs = len(batch_img_metas)
+        img_idx = []
+        for label in labels_3d:
+            for idx in range(num_imgs):
+                img_idx.append(
+                    labels_3d[0].new_ones(int(len(label) / num_imgs)) * idx)
+        img_idx = torch.cat(img_idx)
+        pos_img_idx = img_idx[pos_inds]
 
-        del loss_dict['loss_offset']
-        del loss_dict['loss_depth']
-        if self.pred_keypoints:
-            del loss_dict['loss_kpts']
-        if self.pred_bbox2d:
-            del loss_dict['loss_consistency']
+        flatten_strided_bbox_preds = []
+        flatten_strided_bbox2d_preds = []
+        flatten_bbox_targets_3d = []
+        flatten_strides = []
 
-        return loss_dict
+        for stride_idx, bbox_pred in enumerate(bbox_preds):
+            flatten_bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(
+                -1, sum(self.group_reg_dims))
+            if self.use_tc:
+                flatten_bbox_pred[:, :2] = (flatten_bbox_pred[:, -4:-2] -
+                                            flatten_bbox_pred[:, -2:]) / 2
+            flatten_bbox_pred[:, :2] *= self.strides[stride_idx]
+            flatten_bbox_pred[:, -4:] *= self.strides[stride_idx]
+            flatten_strided_bbox_preds.append(
+                flatten_bbox_pred[:, :self.bbox_coder.bbox_code_size])
+            flatten_strided_bbox2d_preds.append(flatten_bbox_pred[:, -4:])
+
+            bbox_target_3d = bbox_targets_3d[stride_idx].clone()
+            bbox_target_3d[:, :2] *= self.strides[stride_idx]
+            bbox_target_3d[:, -4:] *= self.strides[stride_idx]
+            flatten_bbox_targets_3d.append(bbox_target_3d)
+
+            flatten_stride = flatten_bbox_pred.new_ones(
+                *flatten_bbox_pred.shape[:-1], 1) * self.strides[stride_idx]
+            flatten_strides.append(flatten_stride)
+
+        flatten_strided_bbox_preds = torch.cat(flatten_strided_bbox_preds)
+        flatten_strided_bbox2d_preds = torch.cat(flatten_strided_bbox2d_preds)
+        flatten_bbox_targets_3d = torch.cat(flatten_bbox_targets_3d)
+        flatten_strides = torch.cat(flatten_strides)
+        pos_strided_bbox_preds = flatten_strided_bbox_preds[pos_inds]
+        pos_strided_bbox2d_preds = flatten_strided_bbox2d_preds[pos_inds]
+        pos_bbox_targets_3d = flatten_bbox_targets_3d[pos_inds]
+        pos_strides = flatten_strides[pos_inds]
+
+        pos_decoded_bbox2d_preds = distance2bbox(pos_points,
+                                                 pos_strided_bbox2d_preds)
+
+        pos_strided_bbox_preds[:, :2] = \
+            pos_points - pos_strided_bbox_preds[:, :2]
+        pos_bbox_targets_3d[:, :2] = \
+            pos_points - pos_bbox_targets_3d[:, :2]
+
+        if self.use_depth_classifier and (not self.use_onlyreg_proj):
+            pos_prob_depth_preds = self.bbox_coder.decode_prob_depth(
+                pos_depth_cls_preds, self.depth_range, self.depth_unit,
+                self.division, self.num_depth_cls)
+            sig_alpha = torch.sigmoid(self.fuse_lambda)
+            pos_strided_bbox_preds[:, 2] = \
+                sig_alpha * pos_strided_bbox_preds.clone()[:, 2] + \
+                (1 - sig_alpha) * pos_prob_depth_preds
+
+        box_corners_in_image = pos_strided_bbox_preds.new_zeros(
+            (*pos_strided_bbox_preds.shape[:-1], 8, 2))
+        box_corners_in_image_gt = pos_strided_bbox_preds.new_zeros(
+            (*pos_strided_bbox_preds.shape[:-1], 8, 2))
+
+        for idx in range(num_imgs):
+            mask = (pos_img_idx == idx)
+            if pos_strided_bbox_preds[mask].shape[0] == 0:
+                continue
+            cam2img = torch.eye(4,
+                                dtype=pos_strided_bbox_preds.dtype,
+                                device=pos_strided_bbox_preds.device)
+            view_shape = views[idx].shape
+            cam2img[:view_shape[0], :view_shape[1]] = \
+                pos_strided_bbox_preds.new_tensor(views[idx])
+
+            centers2d_preds = pos_strided_bbox_preds.clone()[mask, :2]
+            centers2d_targets = pos_bbox_targets_3d.clone()[mask, :2]
+            centers3d_targets = points_img2cam(pos_bbox_targets_3d[mask, :3],
+                                               views[idx])
+
+            # decode yaws
+            if self.use_direction_classifier:
+                pos_dir_cls_scores = torch.max(pos_dir_cls_preds[mask],
+                                               dim=-1)[1]
+                pos_strided_bbox_preds[mask] = self.bbox_coder.decode_yaw(
+                    pos_strided_bbox_preds[mask], centers2d_preds,
+                    pos_dir_cls_scores, self.dir_offset, cam2img)
+            pos_bbox_targets_3d[mask, 6] = torch.atan2(
+                centers2d_targets[:, 0] - cam2img[0, 2],
+                cam2img[0, 0]) + pos_bbox_targets_3d[mask, 6]
+
+            if self.use_tc:
+                pos_strided_bbox_preds[mask] = bbox_to_box3d(
+                    pos_decoded_bbox2d_preds[mask],
+                    pos_strided_bbox_preds[mask, 3:6],
+                    pos_strided_bbox_preds[mask, 6], cam2img)
+            else:
+                # use predicted depth to re-project the 2.5D centers
+                pos_strided_bbox_preds[mask, :3] = points_img2cam(
+                    pos_strided_bbox_preds[mask, :3], views[idx])
+            pos_bbox_targets_3d[mask, :3] = centers3d_targets
+
+            # depth fixed when computing re-project 3D bboxes
+            pos_strided_bbox_preds[mask, 2] = \
+                pos_bbox_targets_3d.clone()[mask, 2]
+
+            corners = batch_img_metas[0]['box_type_3d'](
+                pos_strided_bbox_preds[mask],
+                box_dim=self.bbox_coder.bbox_code_size,
+                origin=(0.5, 0.5, 0.5)).corners
+            box_corners_in_image[mask] = points_cam2img(corners, cam2img)
+
+            corners_gt = batch_img_metas[0]['box_type_3d'](
+                pos_bbox_targets_3d[mask, :self.bbox_code_size],
+                box_dim=self.bbox_coder.bbox_code_size,
+                origin=(0.5, 0.5, 0.5)).corners
+            box_corners_in_image_gt[mask] = points_cam2img(corners_gt, cam2img)
+
+        minxy = torch.min(box_corners_in_image, dim=1)[0]
+        maxxy = torch.max(box_corners_in_image, dim=1)[0]
+        proj_bbox2d_preds = torch.cat([minxy, maxxy], dim=1)
+
+        outputs = (proj_bbox2d_preds, pos_decoded_bbox2d_preds)
+
+        if with_kpts:
+            norm_strides = pos_strides * self.regress_ranges[0][1] / \
+                self.strides[0]
+            kpts_targets = box_corners_in_image_gt - pos_points[..., None, :]
+            kpts_targets = kpts_targets.view(
+                (*pos_strided_bbox_preds.shape[:-1], 16))
+            kpts_targets /= norm_strides
+
+            outputs += (kpts_targets, )
+
+        return outputs
 
     def _predict_by_feat_single(self,
                                 cls_score_list: List[Tensor],
@@ -53,7 +185,6 @@ class TC2D3DHead(PGDHead):
                                 img_meta: dict,
                                 cfg: ConfigType,
                                 rescale: bool = False) -> InstanceData:
-        rescale = False
         view = np.array(img_meta['cam2img'])
         scale_factor = img_meta['scale_factor']
         cfg = self.test_cfg if cfg is None else cfg
@@ -82,9 +213,9 @@ class TC2D3DHead(PGDHead):
             dir_cls_score = torch.max(dir_cls_pred, dim=-1)[1]
             depth_cls_pred = depth_cls_pred.permute(1, 2, 0).reshape(
                 -1, self.num_depth_cls)
-            depth_cls_score = F.softmax(
-                depth_cls_pred, dim=-1).topk(
-                    k=2, dim=-1)[0].mean(dim=-1)
+            depth_cls_score = F.softmax(depth_cls_pred,
+                                        dim=-1).topk(k=2,
+                                                     dim=-1)[0].mean(dim=-1)
             if self.weight_dim != -1:
                 weight = weight.permute(1, 2, 0).reshape(-1, self.weight_dim)
             else:
@@ -97,6 +228,9 @@ class TC2D3DHead(PGDHead):
             bbox_pred = bbox_pred.permute(1, 2,
                                           0).reshape(-1,
                                                      sum(self.group_reg_dims))
+            if self.pred_bbox2d and self.use_tc:
+                bbox_pred[:, :2] = (bbox_pred[:, -4:-2] -
+                                    bbox_pred[:, -2:]) / 2
             bbox_pred3d = bbox_pred[:, :self.bbox_coder.bbox_code_size]
             if self.pred_bbox2d:
                 bbox_pred2d = bbox_pred[:, -4:]
@@ -124,7 +258,7 @@ class TC2D3DHead(PGDHead):
             # change the offset to actual center predictions
             bbox_pred3d[:, :2] = points - bbox_pred3d[:, :2]
             if rescale:
-                if self.pred_bbox2d:
+                if self.pred_bbox2d and not self.use_tc:
                     bbox_pred2d /= bbox_pred2d.new_tensor(scale_factor[0])
             if self.use_depth_classifier:
                 prob_depth_pred = self.bbox_coder.decode_prob_depth(
@@ -144,13 +278,11 @@ class TC2D3DHead(PGDHead):
             mlvl_centerness.append(centerness)
             mlvl_depth_uncertainty.append(depth_uncertainty)
             if self.pred_bbox2d:
-                bbox_pred2d = distance2bbox(
-                    points, bbox_pred2d, max_shape=None)
+                bbox_pred2d = distance2bbox(points,
+                                            bbox_pred2d,
+                                            max_shape=img_meta['img_shape']
+                                            if not self.use_tc else None)
                 mlvl_bboxes2d.append(bbox_pred2d)
-                pred_center2d = torch.cat([
-                    (bbox_pred2d[:, 0] + bbox_pred3d[:, 2]) / 2,
-                    (bbox_pred2d[:, 1] + bbox_pred3d[:, 3]) / 2], dim=1)
-                mlvl_centers2d[-1] = pred_center2d
 
         mlvl_centers2d = torch.cat(mlvl_centers2d)
         mlvl_bboxes = torch.cat(mlvl_bboxes)
@@ -159,24 +291,23 @@ class TC2D3DHead(PGDHead):
             mlvl_bboxes2d = torch.cat(mlvl_bboxes2d)
 
         # change local yaw to global yaw for 3D nms
-        cam2img = torch.eye(
-            4, dtype=mlvl_centers2d.dtype, device=mlvl_centers2d.device)
+        cam2img = torch.eye(4,
+                            dtype=mlvl_centers2d.dtype,
+                            device=mlvl_centers2d.device)
         cam2img[:view.shape[0], :view.shape[1]] = \
             mlvl_centers2d.new_tensor(view)
         mlvl_bboxes = self.bbox_coder.decode_yaw(mlvl_bboxes, mlvl_centers2d,
                                                  mlvl_dir_scores,
                                                  self.dir_offset, cam2img)
 
-        if self.pred_bbox2d:
-            dims = mlvl_bboxes[:, 3:6]
-            yaw = mlvl_bboxes[:, 6]
-            locations = points_img2tc(mlvl_bboxes2d, cam2img, dims, yaw, mlvl_bboxes)
-            mlvl_bboxes[:, :3] = locations
+        if self.pred_bbox2d and self.use_tc:
+            mlvl_bboxes = bbox_to_box3d(mlvl_bboxes2d, mlvl_bboxes[:, 3:6],
+                                        mlvl_bboxes[:, 6], cam2img)
 
         mlvl_bboxes_for_nms = xywhr2xyxyr(img_meta['box_type_3d'](
             mlvl_bboxes,
             box_dim=self.bbox_coder.bbox_code_size,
-            origin=(0.5, 1.0, 0.5)).bev)
+            origin=(0.5, 0.5, 0.5)).bev)
 
         mlvl_scores = torch.cat(mlvl_scores)
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
@@ -204,7 +335,7 @@ class TC2D3DHead(PGDHead):
         bboxes = img_meta['box_type_3d'](
             bboxes,
             box_dim=self.bbox_coder.bbox_code_size,
-            origin=(0.5, 1.0, 0.5))
+            origin=(0.5, 0.5, 0.5))
         if not self.pred_attrs:
             attrs = None
 
@@ -218,12 +349,10 @@ class TC2D3DHead(PGDHead):
 
         results_2d = InstanceData()
 
-        if self.pred_bbox2d:
+        if self.pred_bbox2d and not self.use_tc:
             bboxes2d = nms_results[-1]
             results_2d.bboxes = bboxes2d
             results_2d.scores = scores
             results_2d.labels = labels
-
-        results_2d = None
 
         return results, results_2d
