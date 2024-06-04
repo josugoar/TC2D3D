@@ -7,4 +7,4 @@ model = dict(
         style='pytorch',
         init_cfg=dict(checkpoint='torchvision://resnet18'),
         dcn=None),
-    neck=dict(in_channels=[64, 128, 256, 512]))
+    neck=dict(in_channels=(64, 128, 256, 512)))

@@ -6,14 +6,18 @@ custom_imports = dict(imports=['projects.TC2D3D.tc2d3d'])
 model = dict(
     bbox_head=dict(
         type='TC2D3DHead',
-        group_reg_dims=(2, 1, 3, 1, 4),  # offset, depth, size, rot, bbox2d
         reg_branch=(
             (),       # offset
             (),       # depth
             (256, ),  # size
             (256, ),  # rot
-            (256, )   # bbox2d
-        )))
+            (256, ),  # kpts
+            (256, )  # bbox2d
+        )),
+    train_cfg=dict(code_weight=[
+        0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+        0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.0, 1.0
+    ]))
 
 backend_args = None
 
