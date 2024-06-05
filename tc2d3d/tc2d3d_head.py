@@ -121,6 +121,11 @@ class TC2D3DHead(PGDHead):
             centers3d_targets = points_img2cam(pos_bbox_targets_3d[mask, :3],
                                                views[idx])
 
+            # use predicted depth to re-project the 2.5D centers
+            pos_strided_bbox_preds[mask, :3] = points_img2cam(
+                pos_strided_bbox_preds[mask, :3], views[idx])
+            pos_bbox_targets_3d[mask, :3] = centers3d_targets
+
             # decode yaws
             if self.use_direction_classifier:
                 pos_dir_cls_scores = torch.max(
@@ -137,11 +142,6 @@ class TC2D3DHead(PGDHead):
                     pos_decoded_bbox2d_preds[mask],
                     pos_strided_bbox_preds[mask, 3:6],
                     pos_strided_bbox_preds[mask, 6], cam2img)
-            else:
-                # use predicted depth to re-project the 2.5D centers
-                pos_strided_bbox_preds[mask, :3] = points_img2cam(
-                    pos_strided_bbox_preds[mask, :3], views[idx])
-            pos_bbox_targets_3d[mask, :3] = centers3d_targets
 
             # depth fixed when computing re-project 3D bboxes
             pos_strided_bbox_preds[mask, 2] = \
@@ -202,8 +202,11 @@ class TC2D3DHead(PGDHead):
         mlvl_depth_cls_scores = []
         mlvl_depth_uncertainty = []
         mlvl_bboxes2d = None
+        mlvl_bboxes2d_tight_constraint = None
         if self.pred_bbox2d:
             mlvl_bboxes2d = []
+            if self.use_tight_constraint:
+                mlvl_bboxes2d_tight_constraint = []
 
         for cls_score, bbox_pred, dir_cls_pred, depth_cls_pred, weight, \
                 attr_pred, centerness, points in zip(
@@ -259,10 +262,12 @@ class TC2D3DHead(PGDHead):
                 attr_score = attr_score[topk_inds]
                 if self.pred_bbox2d:
                     bbox_pred2d = bbox_pred2d[topk_inds, :]
+                    if self.use_tight_constraint:
+                        bbox_pred2d_tight_constraint = bbox_pred2d
             # change the offset to actual center predictions
             bbox_pred3d[:, :2] = points - bbox_pred3d[:, :2]
             if rescale:
-                if self.pred_bbox2d and not self.use_tight_constraint:
+                if self.pred_bbox2d:
                     bbox_pred2d /= bbox_pred2d.new_tensor(scale_factor[0])
             if self.use_depth_classifier:
                 prob_depth_pred = self.bbox_coder.decode_prob_depth(
@@ -283,11 +288,13 @@ class TC2D3DHead(PGDHead):
             mlvl_depth_uncertainty.append(depth_uncertainty)
             if self.pred_bbox2d:
                 bbox_pred2d = distance2bbox(
-                    points,
-                    bbox_pred2d,
-                    max_shape=img_meta['img_shape']
-                    if not self.use_tight_constraint else None)
+                    points, bbox_pred2d, max_shape=img_meta['img_shape'])
                 mlvl_bboxes2d.append(bbox_pred2d)
+                if self.use_tight_constraint:
+                    bbox_pred2d_tight_constraint = distance2bbox(
+                        points, bbox_pred2d_tight_constraint)
+                    mlvl_bboxes2d_tight_constraint.append(
+                        bbox_pred2d_tight_constraint)
 
         mlvl_centers2d = torch.cat(mlvl_centers2d)
         mlvl_bboxes = torch.cat(mlvl_bboxes)
@@ -305,8 +312,9 @@ class TC2D3DHead(PGDHead):
                                                  self.dir_offset, cam2img)
 
         if self.pred_bbox2d and self.use_tight_constraint:
-            mlvl_bboxes = bbox_to_box3d(mlvl_bboxes2d, mlvl_bboxes[:, 3:6],
-                                        mlvl_bboxes[:, 6], cam2img)
+            mlvl_bboxes = bbox_to_box3d(mlvl_bboxes2d_tight_constraint,
+                                        mlvl_bboxes[:, 3:6], mlvl_bboxes[:, 6],
+                                        cam2img)
 
         mlvl_bboxes_for_nms = xywhr2xyxyr(img_meta['box_type_3d'](
             mlvl_bboxes,
@@ -353,7 +361,7 @@ class TC2D3DHead(PGDHead):
 
         results_2d = InstanceData()
 
-        if self.pred_bbox2d and not self.use_tight_constraint:
+        if self.pred_bbox2d:
             bboxes2d = nms_results[-1]
             results_2d.bboxes = bboxes2d
             results_2d.scores = scores
