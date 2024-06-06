@@ -20,7 +20,7 @@ class TC2D3DHead(PGDHead):
 
     def __init__(self,
                  *args,
-                 use_tight_constraint: bool = True,
+                 use_tight_constraint: bool = False,
                  **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.use_tight_constraint = use_tight_constraint
@@ -141,7 +141,9 @@ class TC2D3DHead(PGDHead):
                 pos_strided_bbox_preds[mask] = bbox_to_box3d(
                     pos_decoded_bbox2d_preds[mask],
                     pos_strided_bbox_preds[mask, 3:6],
-                    pos_strided_bbox_preds[mask, 6], cam2img)
+                    pos_strided_bbox_preds[mask, 6],
+                    cam2img,
+                    origin=(0.5, 0.5, 0.5))
 
             # depth fixed when computing re-project 3D bboxes
             pos_strided_bbox_preds[mask, 2] = \
@@ -312,9 +314,12 @@ class TC2D3DHead(PGDHead):
                                                  self.dir_offset, cam2img)
 
         if self.pred_bbox2d and self.use_tight_constraint:
-            mlvl_bboxes = bbox_to_box3d(mlvl_bboxes2d_tight_constraint,
-                                        mlvl_bboxes[:, 3:6], mlvl_bboxes[:, 6],
-                                        cam2img)
+            mlvl_bboxes = bbox_to_box3d(
+                mlvl_bboxes2d_tight_constraint,
+                mlvl_bboxes[:, 3:6],
+                mlvl_bboxes[:, 6],
+                cam2img,
+                origin=(0.5, 0.5, 0.5))
 
         mlvl_bboxes_for_nms = xywhr2xyxyr(img_meta['box_type_3d'](
             mlvl_bboxes,
