@@ -25,10 +25,10 @@ class TC2D3DTest(Base3DDetector):
             cam2img = batch_data_sample.metainfo['cam2img']
             box_type_3d = batch_data_sample.metainfo['box_type_3d']
 
-            bboxes = bboxes_3d.tensor.new_tensor(
-                box3d_to_bbox(bboxes_3d.tensor.numpy(force=True), cam2img))
             bboxes_3d.tensor = bbox_to_box3d(
-                bboxes,
+                bboxes_3d.tensor.new_tensor(
+                    box3d_to_bbox(bboxes_3d.tensor.numpy(force=True),
+                                  cam2img)),
                 bboxes_3d.dims,
                 bboxes_3d.yaw,
                 cam2img,

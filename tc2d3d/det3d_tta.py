@@ -66,10 +66,12 @@ class Det3DTTAModel(BaseTTAModel):
             merged_bboxes, merged_bboxes_for_nms, merged_scores,
             self.tta_cfg.score_thr, self.tta_cfg.max_per_img, self.tta_cfg)
 
+        results_2d = InstanceData()
         results_3d = InstanceData()
         results_3d.bboxes_3d = det_bboxes
         results_3d.scores_3d = det_scores
         results_3d.labels_3d = det_labels
         det_results = data_samples[0]
+        det_results.pred_instances = results_2d
         det_results.pred_instances_3d = results_3d
         return det_results
