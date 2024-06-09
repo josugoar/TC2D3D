@@ -44,12 +44,12 @@ def bbox_to_box3d(
             origin=origin))
     proj_mat = cam2img @ proj_mat
 
-    A = (
-        proj_mat[:, CORNERS, [0, 1, 0, 1], :3] -
-        proj_mat[:, CORNERS, 2, :3] * bboxes.reshape(num_boxes, 1, 4, 1))
-    b = (
-        proj_mat[:, CORNERS, 2, 3] * bboxes.reshape(num_boxes, 1, 4) -
-        proj_mat[:, CORNERS, [0, 1, 0, 1], 3])
+    A = proj_mat[:, CORNERS,
+                 [0, 1, 0, 1], :3] - proj_mat[:, CORNERS,
+                                              2, :3] * bboxes.reshape(
+                                                  num_boxes, 1, 4, 1)
+    b = proj_mat[:, CORNERS, 2, 3] * bboxes.reshape(
+        num_boxes, 1, 4) - proj_mat[:, CORNERS, [0, 1, 0, 1], 3]
     location, residual, _, _ = torch.linalg.lstsq(A, b, driver='gels')
 
     mask = residual.argmin(dim=1).squeeze(1)
