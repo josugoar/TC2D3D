@@ -41,6 +41,8 @@ class MonoDet3DTTAModel(BaseTTAModel):
             cam2img = img_info['cam2img']
 
             if flip:
+                assert flip_direction == 'horizontal'
+
                 centers_2d_with_depth = points_cam2img(
                     bboxes_3d.center.numpy(force=True),
                     cam2img,
