@@ -21,9 +21,11 @@ class TC2D3DHead(PGDHead):
     def __init__(self,
                  *args,
                  use_tight_constraint: bool = False,
+                 origin: Tuple[float, float, float] = (0.5, 0.5, 0.5),
                  **kwargs) -> None:
-        super().__init__(*args, **kwargs)
         self.use_tight_constraint = use_tight_constraint
+        self.origin = origin
+        super().__init__(*args, **kwargs)
 
     def get_proj_bbox2d(self,
                         bbox_preds: List[Tensor],
@@ -55,9 +57,6 @@ class TC2D3DHead(PGDHead):
         for stride_idx, bbox_pred in enumerate(bbox_preds):
             flatten_bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(
                 -1, sum(self.group_reg_dims))
-            if self.use_tight_constraint:
-                flatten_bbox_pred[:, :2] = (flatten_bbox_pred[:, -4:-2] -
-                                            flatten_bbox_pred[:, -2:]) / 2
             flatten_bbox_pred[:, :2] *= self.strides[stride_idx]
             flatten_bbox_pred[:, -4:] *= self.strides[stride_idx]
             flatten_strided_bbox_preds.append(
@@ -143,7 +142,7 @@ class TC2D3DHead(PGDHead):
                     pos_strided_bbox_preds[mask, 3:6],
                     pos_strided_bbox_preds[mask, 6],
                     cam2img,
-                    origin=(0.5, 0.5, 0.5))
+                    origin=self.origin)
 
             # depth fixed when computing re-project 3D bboxes
             pos_strided_bbox_preds[mask, 2] = \
@@ -152,13 +151,13 @@ class TC2D3DHead(PGDHead):
             corners = batch_img_metas[0]['box_type_3d'](
                 pos_strided_bbox_preds[mask],
                 box_dim=self.bbox_coder.bbox_code_size,
-                origin=(0.5, 0.5, 0.5)).corners
+                origin=self.origin).corners
             box_corners_in_image[mask] = points_cam2img(corners, cam2img)
 
             corners_gt = batch_img_metas[0]['box_type_3d'](
                 pos_bbox_targets_3d[mask, :self.bbox_code_size],
                 box_dim=self.bbox_coder.bbox_code_size,
-                origin=(0.5, 0.5, 0.5)).corners
+                origin=self.origin).corners
             box_corners_in_image_gt[mask] = points_cam2img(corners_gt, cam2img)
 
         minxy = torch.min(box_corners_in_image, dim=1)[0]
@@ -237,9 +236,6 @@ class TC2D3DHead(PGDHead):
             bbox_pred = bbox_pred.permute(1, 2,
                                           0).reshape(-1,
                                                      sum(self.group_reg_dims))
-            if self.pred_bbox2d and self.use_tight_constraint:
-                bbox_pred[:, :2] = (bbox_pred[:, -4:-2] -
-                                    bbox_pred[:, -2:]) / 2
             bbox_pred3d = bbox_pred[:, :self.bbox_coder.bbox_code_size]
             if self.pred_bbox2d:
                 bbox_pred2d = bbox_pred[:, -4:]
@@ -264,13 +260,14 @@ class TC2D3DHead(PGDHead):
                 attr_score = attr_score[topk_inds]
                 if self.pred_bbox2d:
                     bbox_pred2d = bbox_pred2d[topk_inds, :]
-                    if self.use_tight_constraint:
-                        bbox_pred2d_tight_constraint = bbox_pred2d
             # change the offset to actual center predictions
             bbox_pred3d[:, :2] = points - bbox_pred3d[:, :2]
             if rescale:
-                if self.pred_bbox2d:
-                    bbox_pred2d /= bbox_pred2d.new_tensor(scale_factor[0])
+                bbox_pred3d[:, :2] /= bbox_pred3d[:, :2].new_tensor(
+                    scale_factor[0])
+                bbox_pred3d[:, 2] *= scale_factor[0]
+            if self.pred_bbox2d and self.use_tight_constraint:
+                bbox_pred2d_tight_constraint = bbox_pred2d
             if self.use_depth_classifier:
                 prob_depth_pred = self.bbox_coder.decode_prob_depth(
                     depth_cls_pred, self.depth_range, self.depth_unit,
@@ -291,10 +288,16 @@ class TC2D3DHead(PGDHead):
             if self.pred_bbox2d:
                 bbox_pred2d = distance2bbox(
                     points, bbox_pred2d, max_shape=img_meta['img_shape'])
+                if rescale:
+                    bbox_pred2d /= bbox_pred2d.new_tensor(scale_factor[0])
                 mlvl_bboxes2d.append(bbox_pred2d)
                 if self.use_tight_constraint:
                     bbox_pred2d_tight_constraint = distance2bbox(
                         points, bbox_pred2d_tight_constraint)
+                    if rescale:
+                        bbox_pred2d_tight_constraint /= (
+                            bbox_pred2d_tight_constraint.new_tensor(
+                                scale_factor[0]))
                     mlvl_bboxes2d_tight_constraint.append(
                         bbox_pred2d_tight_constraint)
 
@@ -303,6 +306,9 @@ class TC2D3DHead(PGDHead):
         mlvl_dir_scores = torch.cat(mlvl_dir_scores)
         if self.pred_bbox2d:
             mlvl_bboxes2d = torch.cat(mlvl_bboxes2d)
+            if self.use_tight_constraint:
+                mlvl_bboxes2d_tight_constraint = torch.cat(
+                    mlvl_bboxes2d_tight_constraint)
 
         # change local yaw to global yaw for 3D nms
         cam2img = torch.eye(
@@ -319,12 +325,12 @@ class TC2D3DHead(PGDHead):
                 mlvl_bboxes[:, 3:6],
                 mlvl_bboxes[:, 6],
                 cam2img,
-                origin=(0.5, 0.5, 0.5))
+                origin=self.origin)
 
         mlvl_bboxes_for_nms = xywhr2xyxyr(img_meta['box_type_3d'](
             mlvl_bboxes,
             box_dim=self.bbox_coder.bbox_code_size,
-            origin=(0.5, 0.5, 0.5)).bev)
+            origin=self.origin).bev)
 
         mlvl_scores = torch.cat(mlvl_scores)
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
@@ -350,9 +356,7 @@ class TC2D3DHead(PGDHead):
         bboxes, scores, labels, dir_scores, attrs = nms_results[0:5]
         attrs = attrs.to(labels.dtype)  # change data type to int
         bboxes = img_meta['box_type_3d'](
-            bboxes,
-            box_dim=self.bbox_coder.bbox_code_size,
-            origin=(0.5, 0.5, 0.5))
+            bboxes, box_dim=self.bbox_coder.bbox_code_size, origin=self.origin)
         if not self.pred_attrs:
             attrs = None
 
