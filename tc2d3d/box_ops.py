@@ -31,14 +31,14 @@ def bbox_to_box3d(
     cam2img: Union[Tensor, np.ndarray],
     origin: Tuple[float, float, float] = (0.5, 0.5, 0.5)
 ) -> Union[Tensor, np.ndarray]:
-    num_boxes = bboxes.shape[0]
+    num_bboxes = bboxes.shape[0]
 
     proj_mat = torch.eye(
         4, dtype=bboxes.dtype,
-        device=bboxes.device).reshape(1, 1, 4, 4).repeat(num_boxes, 8, 1, 1)
+        device=bboxes.device).reshape(1, 1, 4, 4).repeat(num_bboxes, 8, 1, 1)
     proj_mat[:, :, :3, 3] = bboxes.new_tensor(
         center_to_corner_box3d(
-            np.zeros((num_boxes, 3)),
+            np.zeros((num_bboxes, 3)),
             dims.numpy(force=True),
             yaw.numpy(force=True),
             origin=origin))
@@ -47,12 +47,13 @@ def bbox_to_box3d(
     A = proj_mat[:, CORNERS,
                  [0, 1, 0, 1], :3] - proj_mat[:, CORNERS,
                                               2, :3] * bboxes.reshape(
-                                                  num_boxes, 1, 4, 1)
+                                                  num_bboxes, 1, 4, 1)
     b = proj_mat[:, CORNERS, 2, 3] * bboxes.reshape(
-        num_boxes, 1, 4) - proj_mat[:, CORNERS, [0, 1, 0, 1], 3]
+        num_bboxes, 1, 4) - proj_mat[:, CORNERS, [0, 1, 0, 1], 3]
     location, residual, _, _ = torch.linalg.lstsq(A, b, driver='gels')
 
     mask = residual.argmin(dim=1).squeeze(1)
-    location = location[torch.arange(len(mask)), mask]
+    indices = mask.new_tensor(list(range(len(mask))))
+    location = location[indices, mask]
 
     return torch.cat([location, dims, yaw.unsqueeze(1)], dim=1)
