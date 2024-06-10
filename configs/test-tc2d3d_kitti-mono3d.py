@@ -10,7 +10,7 @@ model = dict(type='TC2D3DTest')
 
 test_pipeline = [
     dict(type='LoadImageFromFileMono3D'),
-    dict(type='Resize3D', scale=(1242, 375), keep_ratio=True),
+    dict(type='mmdet.Resize', scale_factor=1.0),
     dict(
         type='Pack3DDetInputs',
         keys=[
