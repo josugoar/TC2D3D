@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Tuple, Union
 
 import torch
 from mmengine.structures import InstanceData
@@ -18,7 +18,7 @@ class TC2D3DTest(Base3DDetector):
 
     def __init__(self,
                  *args,
-                 origin=(0.5, 0.5, 0.5),
+                 origin: Tuple[float, float, float] = (0.5, 0.5, 0.5),
                  **kwargs):
         self.origin = origin
         super().__init__(*args, **kwargs)
