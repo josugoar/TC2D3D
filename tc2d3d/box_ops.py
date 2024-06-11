@@ -6,7 +6,7 @@ from torch import Tensor
 from mmdet3d.structures import center_to_corner_box3d
 from mmdet3d.utils import array_converter
 
-CORNERS = [
+CONSTRS = [
     (4, 0, 1, 6), (4, 0, 2, 6), (7, 0, 1, 6), (7, 0, 2, 6), (0, 1, 5, 7),
     (0, 1, 6, 7), (3, 1, 5, 7), (3, 1, 6, 7), (5, 4, 0, 2), (5, 4, 3, 2),
     (6, 4, 0, 2), (6, 4, 3, 2), (1, 5, 4, 3), (1, 5, 7, 3), (2, 5, 4, 3),
@@ -32,27 +32,29 @@ def bbox_to_box3d(
     origin: Tuple[float, float, float] = (0.5, 0.5, 0.5)
 ) -> Union[Tensor, np.ndarray]:
     num_bboxes = bboxes.shape[0]
-
-    proj_mat = torch.eye(
-        4, dtype=bboxes.dtype,
-        device=bboxes.device).reshape(1, 1, 4, 4).repeat(num_bboxes, 8, 1, 1)
-    proj_mat[:, :, :3, 3] = bboxes.new_tensor(
+    corners = bboxes.new_tensor(
         center_to_corner_box3d(
             np.zeros((num_bboxes, 3)),
             dims.numpy(force=True),
             yaw.numpy(force=True),
             origin=origin))
+
+    proj_mat = torch.eye(4, dtype=bboxes.dtype, device=bboxes.device)
+    proj_mat = proj_mat.reshape(1, 1, 4, 4)
+    proj_mat = proj_mat.repeat(num_bboxes, 8, 1, 1)
+    proj_mat[:, :, :3, 3] = corners
     proj_mat = cam2img @ proj_mat
 
-    A = proj_mat[:, CORNERS,
-                 [0, 1, 0, 1], :3] - proj_mat[:, CORNERS,
-                                              2, :3] * bboxes.reshape(
-                                                  num_bboxes, 1, 4, 1)
-    b = proj_mat[:, CORNERS, 2, 3] * bboxes.reshape(
-        num_bboxes, 1, 4) - proj_mat[:, CORNERS, [0, 1, 0, 1], 3]
+    A = (
+        proj_mat[:, CONSTRS, [0, 1, 0, 1], :3] -
+        proj_mat[:, CONSTRS, 2, :3] * bboxes.reshape(num_bboxes, 1, 4, 1))
+    b = (
+        proj_mat[:, CONSTRS, 2, 3] * bboxes.reshape(num_bboxes, 1, 4) -
+        proj_mat[:, CONSTRS, [0, 1, 0, 1], 3])
     location, residual, _, _ = torch.linalg.lstsq(A, b, driver='gels')
+    residual = residual.squeeze(-1)
 
-    mask = residual.argmin(dim=1).squeeze(1)
+    mask = residual.argmin(dim=1)
     indices = mask.new_tensor(list(range(len(mask))))
     location = location[indices, mask]
 
