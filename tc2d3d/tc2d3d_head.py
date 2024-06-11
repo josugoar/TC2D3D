@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
+from mmdet.models import multiclass_nms
 from mmdet.structures.bbox import distance2bbox
 from mmengine.structures import InstanceData
 from torch import Tensor
@@ -23,9 +24,9 @@ class TC2D3DHead(PGDHead):
                  use_tight_constraint: bool = False,
                  origin: Tuple[float, float, float] = (0.5, 0.5, 0.5),
                  **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         self.use_tight_constraint = use_tight_constraint
         self.origin = origin
-        super().__init__(*args, **kwargs)
 
     def get_proj_bbox2d(self,
                         bbox_preds: List[Tensor],
@@ -327,10 +328,13 @@ class TC2D3DHead(PGDHead):
                 cam2img,
                 origin=self.origin)
 
-        mlvl_bboxes_for_nms = xywhr2xyxyr(img_meta['box_type_3d'](
-            mlvl_bboxes,
-            box_dim=self.bbox_coder.bbox_code_size,
-            origin=self.origin).bev)
+        if self.pred_bbox2d and self.use_tight_constraint:
+            mlvl_bboxes_for_nms = mlvl_bboxes2d
+        else:
+            mlvl_bboxes_for_nms = xywhr2xyxyr(img_meta['box_type_3d'](
+                mlvl_bboxes,
+                box_dim=self.bbox_coder.bbox_code_size,
+                origin=self.origin).bev)
 
         mlvl_scores = torch.cat(mlvl_scores)
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
@@ -348,11 +352,36 @@ class TC2D3DHead(PGDHead):
             if self.weight_dim != -1:
                 mlvl_depth_uncertainty = torch.cat(mlvl_depth_uncertainty)
                 mlvl_nms_scores *= mlvl_depth_uncertainty[:, None]
-        nms_results = box3d_multiclass_nms(mlvl_bboxes, mlvl_bboxes_for_nms,
-                                           mlvl_nms_scores, cfg.score_thr,
-                                           cfg.max_per_img, cfg,
-                                           mlvl_dir_scores, mlvl_attr_scores,
-                                           mlvl_bboxes2d)
+        if self.pred_bbox2d and self.use_tight_constraint:
+            dets, labels, inds = multiclass_nms(
+                mlvl_bboxes_for_nms,
+                mlvl_nms_scores,
+                cfg.score_thr,
+                cfg.box2d_nms,
+                cfg.max_per_img,
+                return_inds=True)
+
+            num_classes = mlvl_nms_scores.size(1) - 1
+            bboxes = mlvl_bboxes[:, None].expand(
+                mlvl_bboxes.size(0), num_classes,
+                self.bbox_coder.bbox_code_size)
+            dir_scores = mlvl_dir_scores[:, None].expand(
+                mlvl_dir_scores.size(0), num_classes)
+            attrs = mlvl_attr_scores[:, None].expand(
+                mlvl_attr_scores.size(0), num_classes)
+
+            bboxes = bboxes.reshape(-1, self.bbox_coder.bbox_code_size)
+            dir_scores = dir_scores.reshape(-1)
+            attrs = attrs.reshape(-1)
+            nms_results = (bboxes[inds], dets[:, -1], labels, dir_scores[inds],
+                           attrs[inds], dets[:, :-1])
+        else:
+            nms_results = box3d_multiclass_nms(mlvl_bboxes,
+                                               mlvl_bboxes_for_nms,
+                                               mlvl_nms_scores, cfg.score_thr,
+                                               cfg.max_per_img, cfg,
+                                               mlvl_dir_scores,
+                                               mlvl_attr_scores, mlvl_bboxes2d)
         bboxes, scores, labels, dir_scores, attrs = nms_results[0:5]
         attrs = attrs.to(labels.dtype)  # change data type to int
         bboxes = img_meta['box_type_3d'](

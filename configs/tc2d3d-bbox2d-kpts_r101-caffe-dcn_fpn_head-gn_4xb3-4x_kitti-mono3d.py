@@ -15,7 +15,8 @@ model = dict(
     train_cfg=dict(code_weight=[
         1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
         0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.0, 1.0
-    ]))
+    ]),
+    test_cfg=dict(box2d_nms=dict(iou_threshold=0.05)))
 
 backend_args = None
 
