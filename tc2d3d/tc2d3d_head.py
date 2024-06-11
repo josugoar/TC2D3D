@@ -24,9 +24,9 @@ class TC2D3DHead(PGDHead):
                  use_tight_constraint: bool = False,
                  origin: Tuple[float, float, float] = (0.5, 0.5, 0.5),
                  **kwargs) -> None:
-        super().__init__(*args, **kwargs)
         self.use_tight_constraint = use_tight_constraint
         self.origin = origin
+        super().__init__(*args, **kwargs)
 
     def get_proj_bbox2d(self,
                         bbox_preds: List[Tensor],
