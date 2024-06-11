@@ -19,8 +19,14 @@ class TC2D3DTest(Base3DDetector):
     def __init__(self,
                  *args,
                  origin: Tuple[float, float, float] = (0.5, 0.5, 0.5),
+                 noise: bool = False,
+                 noise_mean: float = 0.0,
+                 noise_std: float = 1.0,
                  **kwargs):
         self.origin = origin
+        self.noise = noise
+        self.noise_mean = noise_mean
+        self.noise_std = noise_std
         super().__init__(*args, **kwargs)
 
     def loss(self, batch_inputs: Tensor,
@@ -43,6 +49,9 @@ class TC2D3DTest(Base3DDetector):
 
             bboxes = bboxes_3d.tensor.new_tensor(
                 box3d_to_bbox(bboxes_3d.tensor.numpy(force=True), cam2img))
+            if self.noise:
+                bboxes += torch.normal(self.noise_mean, self.noise_std,
+                                       bboxes.shape)
 
             bboxes_3d.tensor = bbox_to_box3d(
                 bboxes,
