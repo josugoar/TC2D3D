@@ -49,9 +49,13 @@ class TC2D3DTest(Base3DDetector):
 
             bboxes = bboxes_3d.tensor.new_tensor(
                 box3d_to_bbox(bboxes_3d.tensor.numpy(force=True), cam2img))
+
             if self.noise:
                 bboxes += torch.normal(self.noise_mean, self.noise_std,
                                        bboxes.shape)
+                bboxes_3d.tensor += torch.normal(self.noise_mean,
+                                                 self.noise_std,
+                                                 bboxes_3d.shape)
 
             bboxes_3d.tensor = bbox_to_box3d(
                 bboxes,
