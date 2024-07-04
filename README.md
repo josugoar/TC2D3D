@@ -1,7 +1,7 @@
 # TC2D3D
 
 <p align="center">
-  <img src="assets/tc2d3d.png" alt="argdeco" width="1280" height="320" />
+  <img src="assets/tc2d3d.png" alt="tc2d3d" width="1280" height="320" />
 </p>
 
 <h1></h1>
