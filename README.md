@@ -6,4 +6,6 @@
 
 <h1></h1>
 
-> [https://drive.google.com/drive/folders/1ce1w8c4vzSpj-GNz3PPrfdEepjvrQQDm?usp=drive_link](https://drive.google.com/drive/folders/1ce1w8c4vzSpj-GNz3PPrfdEepjvrQQDm?usp=sharing)
+> 2D/3D Tight Constraint for Monocular General-Purpose 3D Object Detection
+
+## [Weights](https://drive.google.com/drive/folders/1ce1w8c4vzSpj-GNz3PPrfdEepjvrQQDm?usp=sharing)
