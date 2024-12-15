@@ -4,7 +4,7 @@ _base_ = [
     'mmdet3d::_base_/default_runtime.py'
 ]
 
-custom_imports = dict(imports=['projects.TC2D3D.tc2d3d'])
+custom_imports = dict(imports=['projects.tc2d3d.tc2d3d'])
 
 model = dict(type='TC2D3DTest')
 
