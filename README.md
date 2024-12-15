@@ -1,4 +1,4 @@
-# TC2D3D
+# tc2d3d
 
 <p align="center">
   <img src="assets/tc2d3d.png" alt="tc2d3d" width="1280" height="320" />
