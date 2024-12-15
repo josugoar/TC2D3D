@@ -1,6 +1,6 @@
 _base_ = 'mmdet3d::pgd/pgd_r101-caffe_fpn_head-gn_4xb3-4x_kitti-mono3d.py'
 
-custom_imports = dict(imports=['projects.tc2d3d.tc2d3d'])
+custom_imports = dict(imports=['projects.TC2D3D.tc2d3d'])
 
 # model settings
 model = dict(
